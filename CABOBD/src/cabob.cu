@@ -319,7 +319,7 @@ __device__ int __forceinline__ find_entering_var(float * cost, int n) {
 
 
 template<int rows>
-__device__ int __forceinline__ get_pivot_row(float (* p)[collumns][rows],int collumn, int collumns)
+__device__ int __forceinline__ get_pivot_row(float  p[][rows],int collumn, int collumns)
 {
 	const unsigned int laneid = threadIdx.x%32;
 	float vmax = INFINITY;
@@ -351,7 +351,7 @@ __device__ int __forceinline__ get_pivot_row(float (* p)[collumns][rows],int col
  */
 //only works for 32 rows!!
 template<int rows, int lim>
-__device__ int __forceinline__ apply_row_op(float (* p)[][collumns][rows],float * cost, int collumns)
+__device__ float __forceinline__ apply_row_op(float  p[][rows],float * cost, int collumns)
 {
 
 	//
@@ -405,11 +405,13 @@ __device__ int __forceinline__ apply_row_op(float (* p)[][collumns][rows],float 
 			(*p)[i][laneid] = element;
 		}
 	}
+
+	return cost[collumns-1]
 }
 
 
-template<int rows>
-__global__ void do_simplex(float (* matrix)[n][rows],float * cost,int n) {
+template<int rows,int collumns>
+__global__ void do_simplex(float  matrix[][collumns][rows],float * cost,int n) {
 
 
 	const unsigned int tid = threadIdx.x;
@@ -438,8 +440,24 @@ __global__ void do_simplex(float (* matrix)[n][rows],float * cost,int n) {
 
 }
 
+#define set(X) (1<<(X-1))
+#define set2(X,Y) (set(X)|set(Y))
+
 int main(int argc, const char* argv[]) {
 	float * d = NULL;
+	int warps = 1024*14/32;
+	int problemwidth = 6;
+	const int rows = 32;
+	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,3),set(3),set2(1,3)};
+	float value [problemwidth] = {2.f,3.f,4.f,6.f,8.f,1.f};
+
+	//+1 for the constraints
+	float matrix[problemwidth+rows+1][rows];
+	for(int i = 0; i < problemwidth;i++) {
+		for(int j; j < rows;j++) {
+			matrix[i][j] = 0.0 + (float)
+		}
+	}
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
 	do_simplex<<<14,1024>>>(d,26843545);

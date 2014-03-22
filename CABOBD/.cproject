@@ -29,7 +29,7 @@
 								<option id="nvcc.compiler.pic.1644952748" name="Position Independent Code (-fPIC)" superClass="nvcc.compiler.pic"/>
 								<option id="nvcc.compiler.usefastmath.1300888902" name="Make use of fast math library (-use_fast_math)" superClass="nvcc.compiler.usefastmath" value="true" valueType="boolean"/>
 								<option id="nvcc.compiler.verbose.1434597307" name="Verbose (-v)" superClass="nvcc.compiler.verbose" value="true" valueType="boolean"/>
-								<option id="nvcc.compiler.option.lineinfo.2081736287" superClass="nvcc.compiler.option.lineinfo" value="true" valueType="boolean"/>
+								<option id="nvcc.compiler.option.lineinfo.2081736287" name="Generate line-number information for device code (-lineinfo)" superClass="nvcc.compiler.option.lineinfo" value="true" valueType="boolean"/>
 								<inputType id="nvcc.compiler.input.cu.744073854" superClass="nvcc.compiler.input.cu"/>
 								<inputType id="nvcc.compiler.input.cpp.631563538" superClass="nvcc.compiler.input.cpp"/>
 								<inputType id="nvcc.compiler.input.c.680751220" superClass="nvcc.compiler.input.c"/>
