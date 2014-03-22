@@ -11,3 +11,8 @@
 *.lai
 *.la
 *.a
+
+#metadata
+.metadata/*
+
+RemoteSystemsTempFiles/*
