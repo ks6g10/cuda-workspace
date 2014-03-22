@@ -30,6 +30,14 @@ __device__ unsigned int bitreverse(unsigned int number) {
 	number = ((0xaaaaaaaa & number) >> 1) | ((0x55555555 & number) << 1);
 	return number;
 }
+template<int _rows,int _collumns>
+struct frame {
+	const int rows;
+	const int collumns;
+	float matrix[_collumns][_rows];
+	float cost[_collumns];
+};
+
 
 /**
  * CUDA kernel function that reverses the order of bits in each element of the array.
@@ -442,42 +450,42 @@ __global__ void do_simplex(float  matrix[][collumns][rows],float * cost,int n) {
 
 #define set(X) (1<<(X-1))
 #define set2(X,Y) (set(X)|set(Y))
-
 int main(int argc, const char* argv[]) {
 	float * d = NULL;
 	int warps = 1024*14/32;
-	int problemwidth = 6;
+	const int problemwidth = 6;
 	const int rows = 32;
-	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,3),set(3),set2(1,3)};
+	struct frame<rows,problemwidth+1+rows> prob ={rows,problemwidth+1};
+	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,4),set2(2,3),set(3),set2(1,3)};
 	float value [problemwidth] = {2.f,3.f,4.f,6.f,8.f,1.f};
-	float cost[problemwidth+rows+1];
 	//+1 for the constraints
-	float matrix[problemwidth+rows+1][rows];
-	for(int i = 0; i < problemwidth;i++) {
+	int i;
+	for(i = 0; i < problemwidth;i++) {
 		for(int j; j < rows;j++) {
-			matrix[i][j] = 0.0 + ((float) !!(set(j) & bids[i]));
+			prob.matrix[i][j] = 0.0 + ((float) !!(set(j) & bids[i]));
+			printf("%.1f\n",prob.matrix[i][j]);
 		}
-		cost[i] = -value[i];
+		prob.cost[i] = -value[i];
 	}
-
+	//put the I matrix in mem
 	for(; i < problemwidth+rows;i++) {
-		for(int j; j < rows;j++) {
-			matrix[i][j] = 0.0f;
+		for(int j =0; j < rows;j++) {
+			prob.matrix[i][j] = 0.0f;
 			if(j == i-problemwidth) {
-				matrix[i][j] = 1.0f;
+				prob.matrix[i][j] = 1.0f;
 			}
 		}
 	}
 
 	//set the constraints
-	for(int j; j < rows;j++) {
-		matrix[problemwidth+rows][j] = 1.0f;
+	for(int j=0; j < rows;j++) {
+		prob.matrix[problemwidth+rows][j] = 1.0f;
 	}
 
-	CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
+	//CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
-	do_simplex<<<14,1024>>>(d,26843545);
-	CUDA_CHECK_RETURN(cudaThreadSynchronize());
+	//do_simplex<<<14,1024>>>(d,26843545);
+	//CUDA_CHECK_RETURN(cudaThreadSynchronize());
 	exit(0);
 	if(argc < 2) {
 		fprintf(stderr,"No argument supplied\n");
