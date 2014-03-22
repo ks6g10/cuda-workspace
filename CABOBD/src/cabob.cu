@@ -20,8 +20,8 @@
 		cudaError_t _m_cudaStat = value;			\
 		if (_m_cudaStat != cudaSuccess) {			\
 			fprintf(stderr, "Error %s at line %d in file %s\n", \
-				cudaGetErrorString(_m_cudaStat), __LINE__, __FILE__); \
-			exit(1);					\
+					cudaGetErrorString(_m_cudaStat), __LINE__, __FILE__); \
+					exit(1);					\
 		} }
 
 __device__ unsigned int bitreverse(unsigned int number) {
@@ -357,14 +357,14 @@ __device__ float __forceinline__ apply_row_op(float  p[][rows],float * cost, int
 	//
 	const unsigned int laneid = threadIdx.x%32;
 	const unsigned int warpid = threadIdx.x/32;
-	
+
 	int row, collumn;
 	while(1) {
 		collumn = find_entering_var<lim>(cost,collumns);
 		if(collumn == -1 || cost[collumn] >= 0.0f) {
 			break;						
 		}
-		
+
 		row = get_pivot_row<rows>(p,collumn,collumns);
 
 
@@ -416,11 +416,11 @@ __global__ void do_simplex(float  matrix[][collumns][rows],float * cost,int n) {
 
 	const unsigned int tid = threadIdx.x;
 	int cache2[1024];
-//	cache2[tid] = 0;
+	//	cache2[tid] = 0;
 
-//	if(tid < n) {
-//		cost[tid] = cosf(1/tid+0.5555555555555555555f);
-//	}
+	//	if(tid < n) {
+	//		cost[tid] = cosf(1/tid+0.5555555555555555555f);
+	//	}
 	__syncthreads();
 	int collumn = find_entering_var<26843545>(cost,n);
 	if(cost[collumn] > 0.0f) {
@@ -450,14 +450,30 @@ int main(int argc, const char* argv[]) {
 	const int rows = 32;
 	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,3),set(3),set2(1,3)};
 	float value [problemwidth] = {2.f,3.f,4.f,6.f,8.f,1.f};
-
+	float cost[problemwidth+rows+1];
 	//+1 for the constraints
 	float matrix[problemwidth+rows+1][rows];
 	for(int i = 0; i < problemwidth;i++) {
 		for(int j; j < rows;j++) {
-			matrix[i][j] = 0.0 + (float)
+			matrix[i][j] = 0.0 + ((float) !!(set(j) & bids[i]));
+		}
+		cost[i] = -value[i];
+	}
+
+	for(; i < problemwidth+rows;i++) {
+		for(int j; j < rows;j++) {
+			matrix[i][j] = 0.0f;
+			if(j == i-problemwidth) {
+				matrix[i][j] = 1.0f;
+			}
 		}
 	}
+
+	//set the constraints
+	for(int j; j < rows;j++) {
+		matrix[problemwidth+rows][j] = 1.0f;
+	}
+
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
 	do_simplex<<<14,1024>>>(d,26843545);
