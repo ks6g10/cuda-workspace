@@ -445,7 +445,7 @@ int main(int argc, const char* argv[]) {
 	int warps = 1024*14/32;
 	const int problemwidth = 6;
 	const int rows = 32;
-	const int collumns = problemwidth+1+rows;
+	const int collumns = problemwidth+2+rows;
 	float matrix[collumns][rows];
 	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,4),set2(2,3),set(3),set2(1,3)};
 	float value [problemwidth] = {2.f,3.f,4.f,6.f,8.f,1.f};
@@ -476,12 +476,19 @@ int main(int argc, const char* argv[]) {
 	}
 
 	for(i = 0; i < rows; i ++ ) {
-		for(int c = 0; c < problemwidth+1+rows; c++) {
+		for(int c = 0; c < collumns; c++) {
 			printf("%.1f\t",matrix[c][i]);
 		}
 		printf("\n");
 	}
-	for(int c = 0; c < problemwidth+1+rows; c++) {
+	//set rest of cost vector to 0
+	for(int c = problemwidth; c < collumns; c++) {
+		cost[c] = 0.0f;
+	}
+	//set p to 1
+	cost[collumns -2] = 1.0f;
+
+	for(int c = 0; c < collumns; c++) {
 				printf("%.1f\t",cost[c]);
 	}
 
