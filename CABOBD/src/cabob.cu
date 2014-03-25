@@ -438,7 +438,7 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n) {
 			printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
 	for(int i = 0; i < 1024;i++) {
 
-		assert(cache2[i] == cache2[tid]);
+		//assert(cache2[i] == cache2[tid]);
 	}
 	//assert(cache[laneid][laneid] == cache[warpid][laneid]);
 
@@ -477,7 +477,8 @@ int main(int argc, const char* argv[]) {
 
 	//set the constraints
 	for(int j=0; j < rows;j++) {
-		matrix[problemwidth+rows][j] = 1.0f;
+		matrix[problemwidth+rows][j] = 0.0f;
+		matrix[problemwidth+rows+1][j] = 1.0f;
 	}
 
 	for(i = 0; i < rows; i ++ ) {
@@ -514,6 +515,17 @@ int main(int argc, const char* argv[]) {
 	printf("hello\n");
 	do_simplex<32><<<1,32>>>(dmatrix,dcost,collumns);
 	CUDA_CHECK_RETURN(cudaThreadSynchronize());
+	CUDA_CHECK_RETURN(cudaMemcpy(matrix,mmatrix,sizeof(matrix), cudaMemcpyDeviceToHost));
+	CUDA_CHECK_RETURN(cudaMemcpy(cost,dcost,sizeof(cost), cudaMemcpyDeviceToHost));
+	for(i = 0; i < rows; i ++ ) {
+			for(int c = 0; c < collumns; c++) {
+				printf("%.1f\t",matrix[c][i]);
+			}
+			printf("\n");
+		}
+	for(int c = 0; c < collumns; c++) {
+		printf("%.1f\t",cost[c]);
+	}
 	exit(0);
 	if(argc < 2) {
 		fprintf(stderr,"No argument supplied\n");
