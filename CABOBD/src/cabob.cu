@@ -512,7 +512,7 @@ int main(int argc, const char* argv[]) {
 
 	//CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
-	do_simplex<32><<<14,1024>>>(dmatrix,dcost,collumns);
+	do_simplex<32><<<1,32>>>(dmatrix,dcost,collumns);
 	CUDA_CHECK_RETURN(cudaThreadSynchronize());
 	exit(0);
 	if(argc < 2) {
