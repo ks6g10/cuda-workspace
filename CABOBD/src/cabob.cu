@@ -374,41 +374,44 @@ __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, in
 
 
 
-		float colpiv = p[collumn][laneid];
-		float div = __shfl(colpiv,row);
-		div /=div;
+		float element = p[collumn][laneid];
+		float pivot = __shfl(element,row);
+		float y = (-element);
+		float costy = -cost[collumn];
 		if(laneid == row) {
-			div = colpiv;
-			colpiv /= colpiv;
+			cost[collumn] = costy + cost[collumn];
+			y = 1.f/element-1.f;
+			element /= element;
+		} else {
+			element = y*element+element;
 		}
-
-		float y = (-colpiv)/div;
+		p[collumn][laneid] = element;
 		// 0 = xdiv + colpiv
 		// -colpiv = xdiv
 		// -colpiv/div = x
 		for(int c = 0; c < collumn; c++) {
 			float element = p[c][laneid];
-			if(laneid == row) {
-				element /=div;
-			}
-			float xpp = __shfl(element,row);
-			if(laneid != row) {
-				element= y*xpp+element;
-			}
+			float xpp = __shfl(element,row)/pivot;
+			element= y*xpp+element;
 			p[c][laneid] = element;
+			if(laneid == row) {
+				cost[c] = costy*element + cost[c];
+			//	printf("collumn %d\n",collumn);
+			}
 		}
 
 		for(int c = collumn+1; c < collumns; c++) {
 			float element = p[c][laneid];
-			if(laneid == row) {
-				element /=div;
-			}
-			float xpp = __shfl(element,row);
-			if(laneid != row) {
-				element= y*xpp+element;
-			}
+			float xpp = __shfl(element,row)/pivot;
+			element= y*xpp+element;
 			p[c][laneid] = element;
+			if(laneid == row) {
+				cost[c] = costy*element + cost[c];
+			}
 		}
+
+
+
 	}
 
 	return cost[collumns-1];
@@ -431,8 +434,10 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n) {
 	__threadfence_system();
 	__syncthreads();
 	//assert(collumn == cache2[tid]);
+	if(!tid)
+			printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
 	for(int i = 0; i < 1024;i++) {
-		//printf("t1 %d t2 %d, i %d, laneid %d\n",collumn,cache[i][laneid],i,laneid);
+
 		assert(cache2[i] == cache2[tid]);
 	}
 	//assert(cache[laneid][laneid] == cache[warpid][laneid]);
@@ -489,7 +494,7 @@ int main(int argc, const char* argv[]) {
 	cost[collumns -2] = 1.0f;
 
 	for(int c = 0; c < collumns; c++) {
-				printf("%.1f\t",cost[c]);
+		printf("%.1f\t",cost[c]);
 	}
 
 	float (* dmatrix)[32];
