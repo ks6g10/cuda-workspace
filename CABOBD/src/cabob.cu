@@ -445,7 +445,7 @@ __device__ int __forceinline__  init_table(float  (*matrix)[rows],float * cost,i
 	const unsigned int mask =  1 << laneid;
 	int i;
 	for(i = 0; i < n; i ++) {
-		matrix[i][laneid] = ((float)!!(in[i]  & mask));
+		matrix[i][laneid] =(float) ((in[i]  & mask) > 0);
 	}
 	//now i == n
 	for(;i<n+32;i++) {
@@ -459,15 +459,15 @@ __device__ int __forceinline__  init_table(float  (*matrix)[rows],float * cost,i
 
 	int c;
 	for(c = laneid; c< n; c +=32) {
-		cost[c] = (float) in_value[c];
+		cost[c] = -((float) in_value[c]);
 	}
 	for(;c < n+32; c += 32) {
 		cost[c] = 0.0f;
 	}
 	// now c = n+32
 	if(laneid == 0) {
-		cost[n+32+1] = 1.0f;
-		cost[n+32+2] = 0.0f;
+		cost[n+32] = 1.0f;
+		cost[n+32+1] = 0.0f;
 	}
 	return i+1;
 }
@@ -483,15 +483,15 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n,unsigned in
 
 	__shared__ int cache2[1024];
 	int new_n = init_table<rows>(matrix,cost,n,in,in_value);
-	//cost[warpid*n+laneid] = apply_row_op<32,60>((matrix+warpid*n),(cost+warpid*n),n);
+	cache2[tid] = apply_row_op<32,60>((matrix+warpid*n),(cost+warpid*n),new_n);
 	//__threadfence_system();
-	//__syncthreads();
+	__syncthreads();
 	//assert(collumn == cache2[tid]);
 	//printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
-	//for(int i = 0; i < 1024;i++) {
+	for(int i = 0; i < 1024;i++) {
 
-		//assert(cache2[i] == cache2[tid]);
-	//}
+		assert(cache2[i] == cache2[tid]);
+	}
 	//assert(cache[laneid][laneid] == cache[warpid][laneid]);
 
 }
@@ -500,12 +500,14 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n,unsigned in
 #define set2(X,Y) (set(X)|set(Y))
 int main(int argc, const char* argv[]) {
 	int warps = 1024*14/32;
-	const int problemwidth = 6;
+	const int problemwidth = 21;
 	const int rows = 32;
 	const int collumns = problemwidth+2+rows;
 	float matrix[collumns][rows];
-	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,4),set2(2,3),set(3),set2(1,3)};
-	unsigned int value [problemwidth] = {2,3,4,6,8,1};
+	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,4),set2(2,3),set(3),set2(1,3),
+										46554,88465,122321,4654848,6545645,1321321,3215484,64555,
+										665565,12324,32132,32122,548484,989498,456542};
+	unsigned int value [problemwidth] = {2,3,4,6,8,1,14,58,64,21,32,45,65,1,23,45,84,65,32,12,45};
 	float cost[collumns];
 	//+1 for the constraints
 	int i;
@@ -514,9 +516,10 @@ int main(int argc, const char* argv[]) {
 			matrix[i][j] = 0.0 + ((float) !!(set(j) & bids[i]));
 
 		}
-		cost[i] = -value[i];
-
+		cost[i] =-((float) value[i]);
+		//printf("%f\n",cost[i]);
 	}
+	//return 0;
 	//put the I matrix in mem
 	for(; i < problemwidth+rows;i++) {
 		for(int j =0; j < rows;j++) {
@@ -562,6 +565,9 @@ int main(int argc, const char* argv[]) {
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &dcost,sizeof(cost)*warps));
 	printf("allocated %lu bytes for cost\n",sizeof(cost)*warps);
 
+	CUDA_CHECK_RETURN(cudaMemcpy(in,bids,sizeof(unsigned int)*problemwidth, cudaMemcpyHostToDevice));
+	CUDA_CHECK_RETURN(cudaMemcpy(in_value,value,sizeof(unsigned int)*problemwidth, cudaMemcpyHostToDevice));
+	//return 0;
 //	for(int w = 0; w < warps; w++) {
 	//	CUDA_CHECK_RETURN(cudaMemcpy(&mmatrix[w*(sizeof(matrix)/sizeof(float))],matrix,sizeof(matrix), cudaMemcpyHostToDevice));
 	//	CUDA_CHECK_RETURN(cudaMemcpy(&dcost[w*(sizeof(cost)/sizeof(float))],cost,sizeof(cost), cudaMemcpyHostToDevice));
