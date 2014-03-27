@@ -352,6 +352,13 @@ __device__ int __forceinline__ get_pivot_row(float  ( *p)[rows],int collumn, int
 	return index;
 }
 
+__device__ int __forceinline__ is_integer(float  (*p)[rows],int collumns) {
+	const unsigned int laneid = threadIdx.x%32;
+	float in = p[collumns-1][laneid];
+	int result = __all(ceilf(in) == in);
+	return result;
+}
+
 /**
  * Host function that prepares data array and passes it to the CUDA kernel.
  */
@@ -361,9 +368,12 @@ __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, in
 {
 
 	//
+	__shared__ int bids[32][32];
 	const unsigned int laneid = threadIdx.x%32;
-
+	const unsigned int warpid = threadIdx.x/32;
 	int row, collumn;
+	bids[warpid][laneid] = laneid;
+	//assert(cost[0] == -2.0f);
 	while(1) {
 		collumn = find_entering_var<lim>(cost,collumns);
 		if(collumn == -1 || cost[collumn] >= 0.0f) {
@@ -371,7 +381,10 @@ __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, in
 		}
 
 		row = get_pivot_row<rows>(p,collumn,collumns);
-
+		//__syncthreads();
+		//if(collumn != 4)
+		//printf("col %d row %d, tid %d\n",collumn,row,threadIdx.x);
+		//return 0;
 
 
 		float element = p[collumn][laneid];
@@ -382,6 +395,9 @@ __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, in
 			cost[collumn] = costy + cost[collumn];
 			y = 1.f/element-1.f;
 			element /= element;
+
+			bids[warpid][row] = collumn;
+
 		} else {
 			element = y*element+element;
 		}
@@ -413,8 +429,34 @@ __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, in
 
 
 	}
+//	__syncthreads();
+	if(laneid == 0) {
+		//printf("tid %d\t", threadIdx.x);
+			//printf("%d\t%d\t%d\t%d\t%d\n",bids[warpid][0],bids[warpid][1],bids[warpid][2],bids[warpid][3],bids[warpid][4]);
 
+	}
+	assert(is_integer(p,collumns) == 1);
 	return cost[collumns-1];
+}
+
+__device__ int  init_table(float  (*matrix)[rows],float * cost,int n, unsigned int * in, float * in_value) {
+
+	const unsigned int laneid = tid % 32;
+	const unsigned int mask =  1 << laneid;
+	int i;
+	for(i = 0; i < n; i ++) {
+		matrix[i][laneid] = ((float)!!(in[i]  & mask));
+	}
+	//now i == n
+	for(;i<n+32;i++) {
+		matrix[i][laneid] = ((float)((i-n) == laneid));
+	}
+	//now i == n+32, put p collumn
+	matrix[i][laneid] = 0.0f;
+	i++;
+	//put constraint
+	matrix[i][laneid] = 1.0f;
+	return i+1;
 }
 
 
@@ -423,19 +465,16 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n) {
 
 
 	const unsigned int tid = threadIdx.x;
-	const unsigned int warpid = tid / 32;
-	__shared__ int cache2[1024];
-	//	cache2[tid] = 0;
+	const unsigned int warpid = (threadIdx.x+ blockIdx.x * blockDim.x) / 32;
+	const unsigned int laneid = tid % 32;
 
-	//	if(tid < n) {
-	//		cost[tid] = cosf(1/tid+0.5555555555555555555f);
-	//	}
-	cache2[tid] = apply_row_op<32,60>((matrix+warpid*n),(cost+warpid*n),n);
-	__threadfence_system();
-	__syncthreads();
+	__shared__ int cache2[1024];
+
+	cost[warpid*n+laneid] = apply_row_op<32,60>((matrix+warpid*n),(cost+warpid*n),n);
+	//__threadfence_system();
+	//__syncthreads();
 	//assert(collumn == cache2[tid]);
-	if(!tid)
-			printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
+	//printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
 	for(int i = 0; i < 1024;i++) {
 
 		//assert(cache2[i] == cache2[tid]);
@@ -513,8 +552,9 @@ int main(int argc, const char* argv[]) {
 
 	//CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
-	do_simplex<32><<<1,32>>>(dmatrix,dcost,collumns);
+	do_simplex<32><<<14,1024>>>(dmatrix,dcost,collumns);
 	CUDA_CHECK_RETURN(cudaThreadSynchronize());
+	return 0;
 	CUDA_CHECK_RETURN(cudaMemcpy(matrix,mmatrix,sizeof(matrix), cudaMemcpyDeviceToHost));
 	CUDA_CHECK_RETURN(cudaMemcpy(cost,dcost,sizeof(cost), cudaMemcpyDeviceToHost));
 	for(i = 0; i < rows; i ++ ) {
