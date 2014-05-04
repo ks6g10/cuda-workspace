@@ -19,8 +19,8 @@
 #define CUDA_CHECK_RETURN(value) {					\
 		cudaError_t _m_cudaStat = value;			\
 		if (_m_cudaStat != cudaSuccess) {			\
-			fprintf(stderr, "Error %s at line %d in file %s\n", \
-					cudaGetErrorString(_m_cudaStat), __LINE__, __FILE__); \
+			fprintf(stderr, "Error %d %s at line %d in file %s\n", \
+					value,cudaGetErrorString(_m_cudaStat), __LINE__, __FILE__); \
 					exit(1);					\
 		} }
 
@@ -45,283 +45,30 @@ struct stats {
 	int start;
 };
 
-//make sure cost is aligned to 32-256 overspend and nulled to 0.0f
-#define DEFAULT_FLOAT (0.0f)
-template<int lim>
-__device__ int __forceinline__ find_entering_var_old(float * cost, int n) {
-	const unsigned int tid = threadIdx.x;
-	const unsigned int warpid = tid/32;
-	const unsigned int laneid = tid%32;
+__device__ int __forceinline__ bland(float * cost, int n) 
+{
+	const unsigned int laneid = threadIdx.x%32;
 
 	float vmax = 0.0f;
-	int imax = laneid;
-	/*
-	 * cache[0]. x y z w
-	 *           0 1 2 3
-	 * cache[1]. x y z w
-	 *           128 129 130 131
-	 */
-	if(lim <= 32) {
-		if(laneid < n) {
-			vmax = cost[laneid];
-		}
-	} else if(lim <= 64) {
-		float2 cache = make_float2(DEFAULT_FLOAT,DEFAULT_FLOAT);
-		imax = laneid*2;
-		if(laneid*2 < n) {
-			cache = ((float2 *) cost)[laneid];
-			cache.y *= (laneid*2+1 < n);
+	int imin = -1;
+	unsigned int status = 0;
 
-		}
-		vmax = fmax(cache.x,cache.y);
-		if(cache.y == vmax) {
-			imax++;
-		}
-	} else if (lim <= 128) {
-		float4 cache = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-
-		if(laneid*4 < n) {
-			cache = ((float4 *) cost)[laneid];
-			cache.y *= (laneid*4+1 < n);
-			cache.z *= (laneid*4+2 < n);
-			cache.w *= (laneid*4+3 < n);
-		}
-		cache.x = fmax(cache.x,cache.y);
-		cache.z = fmax(cache.z,cache.w);
-		vmax = fmax(cache.x,cache.z);
-		//set base index to x
-		imax = laneid*4;
-		if (vmax == cache.y) {
-			imax +=1;
-		} else if(vmax == cache.z) {
-			imax += 2;
-		} else if (vmax == cache.w) {
-			imax += 3;
-		}
-	} else if ( lim <= 256) {
-
-		float4 cache[2];
-		cache[0] = ((float4 *) cost)[laneid];//guaranteed to be in mem, as n > 128
-		cache[1] = ((float4 *) cost)[laneid+32];
-		if(laneid*4+4+4*32 >= n) {
-			// ignore constant 4*32 in calc
-			/* laneid 0: n 1: 0+4-1= 3: yzw
-			 * laneid 0: n 2: 0+4-2= 2: zw
-			 * laneid 0: n 3: 0+4-3= 1: w
-			 * laneid 0: n 4: 0+4-4= 0:
-			 * laneid 4: n 4: 16+4-4= 16: xyzw
-			 * laneid 3: n 4: 3+4-4= 3: yzw
-			 */
-			switch(laneid*4+4+4*32 -n) {
-			case 3:
-				cache[1] = make_float4(cache[0].x,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
-			case 2:
-				cache[1] = make_float4(cache[0].x,cache[0].y,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
-			case 1:
-				cache[1].w = DEFAULT_FLOAT;
-				break;
-			default:
-				cache[1] = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
+	for(int i = laneid; i < n; i += 32) {
+		float t = cost[i];
+		vmax = fmin(vmax,t);
+		status = __ballot(vmax < 0.0f);		
+		if(status) {
+			if(laneid == 0) {
+				imin = i + __ffs(status) - 1;		
 			}
-		}
-
-		cache[0].x = fmax(cache[0].x,cache[0].y);
-		cache[1].x = fmax(cache[1].x,cache[1].y);
-
-		cache[0].z = fmax(cache[0].z,cache[0].w);
-		cache[1].z = fmax(cache[1].z,cache[1].w);
-
-		cache[0].x = fmax(cache[0].x,cache[0].z);
-		cache[1].x = fmax(cache[1].x,cache[1].z);
-
-		vmax = fmax(vmax,cache[0].x);
-		vmax = fmax(vmax,cache[1].x);
-		if(vmax == cache[0].x) {
-			imax = laneid*4;
-			if(vmax == cache[0].y) {
-				imax += 1;
-			} else if(vmax == cache[0].z) {
-				imax += 2;
-			} else if(vmax == cache[0].w) {
-				imax += 3;
-			}
-
-		} else if(vmax == cache[1].x){
-			//4*32== the offset of the first half of the fetched number
-			// as each thread in the warp fetches a float4
-			imax = laneid*4+4*32;
-			if(vmax == cache[1].y) {
-				imax += 1;
-			} else if(vmax == cache[1].z) {
-				imax += 2;
-			} else if(vmax == cache[1].w) {
-				imax += 3;
-			}
-		}
-	} else {
-		/*256->512->768->1024
-		 *
-		 *
-		 */
-		for(int i = 0; i < n/32*8; i+=2) {
-			float4 cache[2];
-			cache[0] = ((float4 *) cost)[laneid+32*4*i];
-			cache[1] = ((float4 *) cost)[laneid+32*4*(i+1)];
-			cache[0].x = fmax(cache[0].x,cache[0].y);
-			cache[1].x = fmax(cache[1].x,cache[1].y);
-
-			cache[0].z = fmax(cache[0].z,cache[0].w);
-			cache[1].z = fmax(cache[1].z,cache[1].w);
-
-			cache[0].x = fmax(cache[0].x,cache[0].z);
-			cache[1].x = fmax(cache[1].x,cache[1].z);
-			vmax = fmax(vmax,cache[0].x);
-			vmax = fmax(vmax,cache[1].x);
-
-			int index0 = -1;
-			index0 += (vmax == cache[0].x);
-			index0 += (vmax == cache[0].z)*2;
-			index0 += (vmax == cache[0].w);
-			index0 += !(vmax == cache[0].z)*(vmax == cache[0].y);
-		}
+			break;			
+		}		
 	}
-	float t = vmax;
-	for (int mask = warpSize/2; mask > 0; mask /= 2)
-		vmax = fmax(vmax,__shfl_xor(vmax, mask));
+	imin = __shfl(imin,0);
 
-	imax = __ffs(__ballot(vmax == t))-1;
-
-	return imax;
+	return imin;	
 }
-#define DEFAULT_FLOAT (0.0f)
-template<int lim>
-__device__ int __forceinline__ find_entering_var(float * cost, int n) {
-	const unsigned int tid = threadIdx.x;
-	const unsigned int laneid = tid%32;
 
-	float vmax = DEFAULT_FLOAT;
-	int imax = -1;
-	/*
-	 * cache[0]. x y z w
-	 *           0 1 2 3
-	 * cache[1]. x y z w
-	 *           128 129 130 131
-	 */
-	if(lim <= 32) {
-		if(laneid < n) {
-			vmax = cost[laneid];
-			if(vmax < 0.0f) {
-				imax = laneid;
-			}
-
-		}
-	} else if(lim <= 64) {
-		float2 cache = make_float2(DEFAULT_FLOAT,DEFAULT_FLOAT);
-		imax = laneid*2;
-		if(laneid*2 < n) {
-			cache = ((float2 *) cost)[laneid];
-			cache.y *= (laneid*2+1 < n);
-
-		}
-		vmax = fmin(cache.x,cache.y);
-		if(cache.y == vmax) {
-			imax++;
-		}
-	} else if (lim <= 128) {
-		float4 cache = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-
-		if(laneid*4 < n) {
-			cache = ((float4 *) cost)[laneid];
-			cache.y *= (laneid*4+1 < n);
-			cache.z *= (laneid*4+2 < n);
-			cache.w *= (laneid*4+3 < n);
-		}
-		cache.x = fmin(cache.x,cache.y);
-		cache.z = fmin(cache.z,cache.w);
-		vmax = fmin(cache.x,cache.z);
-		//set base index to x
-		imax = laneid*4;
-		if (vmax == cache.y) {
-			imax +=1;
-		} else if(vmax == cache.z) {
-			imax += 2;
-		} else if (vmax == cache.w) {
-			imax += 3;
-		}
-	} else {
-		float4 cache = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-		float4 cache2 = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-		int i;
-#pragma unroll 2
-		for(i = laneid; i*4+4 < n; i+=32) {
-
-			/* i 0: n 1: 0+4-1= 3: yzw
-			 * i 0: n 2: 0+4-2= 2: zw
-			 * i 0: n 3: 0+4-3= 1: w
-			 * i 0: n 4: 0+4-4= 0:
-			 * i 1: n 5: 4+4-5= 3: yzw
-			 * i 4: n 4: 16+4-4= 16: xyzw
-			 * i 3: n 4: 3+4-4= 3: yzw
-			 */
-			cache = ((float4 *) cost)[i];
-			const int tindex = i*4;
-			cache.x = fmin(cache.x,cache.y);
-			cache.z = fmin(cache.z,cache.w);
-			float tmax = fmin(cache.x,cache.z);
-			if(tmax < vmax) {
-				vmax = tmax;
-				imax = (tmax == cache.x)*(tindex);
-				imax = (tmax == cache.y)*(tindex+1);
-				imax = (tmax == cache.z)*(tindex+2);
-				imax = (tmax == cache.w)*(tindex+3);
-			}
-
-		}
-
-		if(i*4 < n) {
-			cache = ((float4 *) cost)[i];
-			switch(i*4+4 -n) {
-			case 3:
-				cache = make_float4(cache.x,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
-			case 2:
-				cache = make_float4(cache.x,cache.y,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
-			case 1:
-				cache.w = DEFAULT_FLOAT;
-				break;
-			default:
-				cache = make_float4(DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT,DEFAULT_FLOAT);
-				break;
-			}
-			const int tindex = i*4;
-			cache.x = fmin(cache.x,cache.y);
-			cache.z = fmin(cache.z,cache.w);
-			vmax = fmin(cache.x,cache.z);
-			if (vmax == cache.y) {
-				imax =tindex+1;
-			} else if (vmax == cache.w) {
-				imax =tindex+3;
-			} else if(vmax == cache.z) {
-				imax =tindex+2;
-			} else if (vmax == cache.x) {
-				imax =tindex;
-			}
-		}
-
-	}
-
-	float t = vmax;
-	for (int mask = warpSize/2; mask > 0; mask /= 2)
-		vmax = fmin(vmax,__shfl_xor(vmax, mask));
-
-	imax = __shfl(imax,__ffs(__ballot(vmax == t))-1);
-
-	return imax;
-}
 
 
 template<int rows>
@@ -331,24 +78,25 @@ __device__ int __forceinline__ get_pivot_row(float  ( *p)[rows],int collumn, int
 	float vmax = INFINITY;
 	int index = -1;
 
-	for(int i = laneid; i < rows; i +=32) {
-		float div = p[collumn][i];
-		float top = p[collumns-1][i];
-		if(div > 0.0f) {
-			float frac = top/div;
-			if(frac < vmax) {
-				vmax = frac;
-				index = i;
-			}
-		}
+	const float div = p[collumn][laneid];
+	const float top = p[collumns-1][laneid];
+
+	if(div > 0.0f) {
+		vmax = top/div;
 	}
-	float t = vmax;
+
+	const float t = vmax;
 	vmax = fmin(vmax,__shfl_xor(vmax,16));
 	vmax = fmin(vmax,__shfl_xor(vmax, 8));
 	vmax = fmin(vmax,__shfl_xor(vmax, 4));
 	vmax = fmin(vmax,__shfl_xor(vmax, 2));
 	vmax = fmin(vmax,__shfl_xor(vmax, 1));
-	index = __shfl(index,__ffs(__ballot(vmax == t))-1);
+//	printf("id %d Ratio %f min %f\n",laneid,t,vmax);
+	index = __ballot(vmax == t);
+	if(laneid == 0) {
+		index = __ffs(index) - 1;
+	}
+	index = __shfl(index,0);
 	return index;
 }
 template<int rows>
@@ -359,85 +107,89 @@ __device__ int __forceinline__ is_integer(float  (*p)[rows],int collumns) {
 	return result;
 }
 
+template<int rows>
+__device__ void pivot(float  (*p)[rows],float * cost, int collumns, int collumn, int row) {
+	const unsigned int laneid = threadIdx.x%32;
+
+	/*
+	 *  // everything but row p and column q
+	 *  for (int i = 0; i <= M; i++)
+	 *     for (int j = 0; j <= M + N; j++)
+	 *        if (i != p && j != q) a[i][j] -= a[p][j] * a[i][q] / a[p][q];
+	 * 	i = row, j = collumn
+	 *  a[p][q] = pivot element
+	 *  a[i][q] = row element in collumn q
+	 *
+	 *  0 = p*x+y
+	 *  -y = p*x
+	 *  -y/p = x
+	 *
+	 */
+	for(int c = 0; c < collumns; c ++) {
+		if(c == collumn) continue;
+		//float res =
+		float put;
+		if(laneid == row) {
+			put = p[c][laneid]/p[collumn][row];
+			cost[c] -= put*cost[collumn];
+		} else {
+			put =p[c][laneid] - p[c][row]*(p[collumn][laneid]/p[collumn][row]);
+		}
+		p[c][laneid] =put;
+
+	}
+//	for(int c = 0; c < collumns && laneid == row; c ++) {
+//		if(c == collumn) continue;
+//		//float res =
+//		float temp = p[c][laneid]/p[collumn][row];
+//		cost[c] -= temp*cost[collumn];
+//		p[c][laneid] = temp;
+//	}
+	p[collumn][laneid] = (float) (laneid == row);
+	if(laneid == row) {
+		cost[collumn] = 0.0f;
+	}
+
+}
+
 /**
  * Host function that prepares data array and passes it to the CUDA kernel.
  */
 //only works for 32 rows!!
-template<int rows, int lim>
+template<int rows>
 __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, int collumns)
 {
-
-	//
-	__shared__ int bids[32][32];
+	//__shared__ int bids[32][32];
 	const unsigned int laneid = threadIdx.x%32;
 	const unsigned int warpid = threadIdx.x/32;
 	int row, collumn;
-	bids[warpid][laneid] = laneid;
+	int count = 1;
+	//bids[warpid][laneid] = -1;
 	//assert(cost[0] == -2.0f);
 	while(1) {
-		collumn = find_entering_var<lim>(cost,collumns);
+		collumn = bland(cost,collumns);
 		if(collumn == -1 || cost[collumn] >= 0.0f) {
-			break;						
+			break;
 		}
-
 		row = get_pivot_row<rows>(p,collumn,collumns);
+		//printf("lane %d col %d row %d cost %f\n",laneid,collumn,row,cost[collumn]);
+		if(row == -1) {
+			count = 2;
+		}
+//		if(laneid == 0) {
+//			printf("warpid %d col %d row %d %f\n",warpid,collumn,row,p[collumn][row]);
+//		}
+		assert(row >= 0);
+		pivot<rows>(p,cost,collumns,collumn,row);
+		__threadfence();
+		//bids[warpid][]
 		//__syncthreads();
-		//if(collumn != 4)
-		//printf("col %d row %d, tid %d\n",collumn,row,threadIdx.x);
-		//return 0;
-
-
-		float element = p[collumn][laneid];
-		float pivot = __shfl(element,row);
-		float y = (-element);
-		float costy = -cost[collumn];
-		if(laneid == row) {
-			cost[collumn] = costy + cost[collumn];
-			y = 1.f/element-1.f;
-			element /= element;
-
-			bids[warpid][row] = collumn;
-
-		} else {
-			element = y*element+element;
-		}
-		p[collumn][laneid] = element;
-		// 0 = xdiv + colpiv
-		// -colpiv = xdiv
-		// -colpiv/div = x
-		for(int c = 0; c < collumn; c++) {
-			float element = p[c][laneid];
-			float xpp = __shfl(element,row)/pivot;
-			element= y*xpp+element;
-			p[c][laneid] = element;
-			if(laneid == row) {
-				cost[c] = costy*element + cost[c];
-			//	printf("collumn %d\n",collumn);
-			}
-		}
-
-		for(int c = collumn+1; c < collumns; c++) {
-			float element = p[c][laneid];
-			float xpp = __shfl(element,row)/pivot;
-			element= y*xpp+element;
-			p[c][laneid] = element;
-			if(laneid == row) {
-				cost[c] = costy*element + cost[c];
-			}
-		}
-
-
-
+		//		break;
+		continue;
 	}
-//	__syncthreads();
-	if(laneid == 0) {
-		//printf("tid %d\t", threadIdx.x);
-			//printf("%d\t%d\t%d\t%d\t%d\n",bids[warpid][0],bids[warpid][1],bids[warpid][2],bids[warpid][3],bids[warpid][4]);
-
-	}
-	assert(is_integer<rows>(p,collumns) == 1);
 	return cost[collumns-1];
 }
+
 template<int rows>
 __device__ int __forceinline__  init_table(float  (*matrix)[rows],float * cost,int n, unsigned int * in, unsigned int * in_value) {
 	const unsigned int tid = threadIdx.x;
@@ -482,31 +234,44 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n,unsigned in
 	const unsigned int laneid = tid % 32;
 
 	__shared__ int cache2[1024];
-	int new_n = init_table<rows>(matrix,cost,n,in,in_value);
-	cache2[tid] = apply_row_op<32,60>((matrix+warpid*n),(cost+warpid*n),new_n);
-	//__threadfence_system();
+	int new_n = n + 32 + 2;
+	assert(init_table<rows>((matrix+warpid*new_n),(cost+warpid*new_n),n,in,in_value)== new_n);
+	//	__syncthreads();
+
+	//	float  (*p)[rows] = (matrix+warpid*new_n);
+	//	float  (*p2)[rows]= (matrix+(warpid+1)*new_n);
+	//	if(warpid < 31) {
+	//		for(int i = 0; i < new_n;i++) {
+	//			assert(p[i][laneid] == p2[i][laneid]);
+	//		}
+	//	}
+	//
+	//	return;
+	cache2[tid] = apply_row_op<rows>((matrix+warpid*new_n),(cost+warpid*new_n),new_n);
+	__threadfence_system();
 	__syncthreads();
+	assert(cache2[tid] == cache2[(tid+32)%blockDim.x]);
 	//assert(collumn == cache2[tid]);
-	//printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
+//	printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
 	for(int i = 0; i < 1024;i++) {
 
-		assert(cache2[i] == cache2[tid]);
+		//assert(cache2[i] == cache2[tid]);
 	}
 	//assert(cache[laneid][laneid] == cache[warpid][laneid]);
 
 }
 
-#define set(X) (1<<(X-1))
+#define set(X) (1<<(X))
 #define set2(X,Y) (set(X)|set(Y))
 int main(int argc, const char* argv[]) {
-	int warps = 1024*14/32;
+	int warps = (1024*14)/32;
 	const int problemwidth = 21;
 	const int rows = 32;
 	const int collumns = problemwidth+2+rows;
 	float matrix[collumns][rows];
 	unsigned int bids[problemwidth] = {set(5),set2(4,5),set2(2,4),set2(2,3),set(3),set2(1,3),
-										46554,88465,122321,4654848,6545645,1321321,3215484,64555,
-										665565,12324,32132,32122,548484,989498,456542};
+			46554,88465,122321,4654848,6545645,1321321,3215484,64555,
+			665565,12324,32132,32122,548484,989498,456542};
 	unsigned int value [problemwidth] = {2,3,4,6,8,1,14,58,64,21,32,45,65,1,23,45,84,65,32,12,45};
 	float cost[collumns];
 	//+1 for the constraints
@@ -568,7 +333,7 @@ int main(int argc, const char* argv[]) {
 	CUDA_CHECK_RETURN(cudaMemcpy(in,bids,sizeof(unsigned int)*problemwidth, cudaMemcpyHostToDevice));
 	CUDA_CHECK_RETURN(cudaMemcpy(in_value,value,sizeof(unsigned int)*problemwidth, cudaMemcpyHostToDevice));
 	//return 0;
-//	for(int w = 0; w < warps; w++) {
+	//	for(int w = 0; w < warps; w++) {
 	//	CUDA_CHECK_RETURN(cudaMemcpy(&mmatrix[w*(sizeof(matrix)/sizeof(float))],matrix,sizeof(matrix), cudaMemcpyHostToDevice));
 	//	CUDA_CHECK_RETURN(cudaMemcpy(&dcost[w*(sizeof(cost)/sizeof(float))],cost,sizeof(cost), cudaMemcpyHostToDevice));
 	//}
@@ -581,11 +346,11 @@ int main(int argc, const char* argv[]) {
 	CUDA_CHECK_RETURN(cudaMemcpy(matrix,mmatrix,sizeof(matrix), cudaMemcpyDeviceToHost));
 	CUDA_CHECK_RETURN(cudaMemcpy(cost,dcost,sizeof(cost), cudaMemcpyDeviceToHost));
 	for(i = 0; i < rows; i ++ ) {
-			for(int c = 0; c < collumns; c++) {
-				printf("%.1f\t",matrix[c][i]);
-			}
-			printf("\n");
+		for(int c = 0; c < collumns; c++) {
+			printf("%.1f\t",matrix[c][i]);
 		}
+		printf("\n");
+	}
 	for(int c = 0; c < collumns; c++) {
 		printf("%.1f\t",cost[c]);
 	}

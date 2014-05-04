@@ -33,6 +33,9 @@
 								<option id="nvcc.compiler.ptxasoptions.294189559" name="ptaxas options (-Xptxas)" superClass="nvcc.compiler.ptxasoptions" valueType="stringList">
 									<listOptionValue builtIn="false" value="-v"/>
 								</option>
+								<option id="nvcc.compiler.precdiv.691642691" name="Use IEEE round-to-nearest mode for precision FP division (-prec-div)" superClass="nvcc.compiler.precdiv" value="false" valueType="boolean"/>
+								<option id="nvcc.compiler.precsqrt.610799442" name="Use IEEE round-to-nearest mode for precision FP sqrt (-prec-sqrt)" superClass="nvcc.compiler.precsqrt" value="false" valueType="boolean"/>
+								<option id="nvcc.compiler.fmad.2050145738" name="Contract FP multiplies and adds/subtracts into FP multiply-add operations (-fmad)" superClass="nvcc.compiler.fmad" value="true" valueType="boolean"/>
 								<inputType id="nvcc.compiler.input.cu.744073854" superClass="nvcc.compiler.input.cu"/>
 								<inputType id="nvcc.compiler.input.cpp.631563538" superClass="nvcc.compiler.input.cpp"/>
 								<inputType id="nvcc.compiler.input.c.680751220" superClass="nvcc.compiler.input.c"/>
