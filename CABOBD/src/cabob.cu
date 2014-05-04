@@ -84,14 +84,13 @@ __device__ int __forceinline__ get_pivot_row(float  ( *p)[rows],int collumn, int
 	if(div > 0.0f) {
 		vmax = top/div;
 	}
-
 	const float t = vmax;
 	vmax = fmin(vmax,__shfl_xor(vmax,16));
 	vmax = fmin(vmax,__shfl_xor(vmax, 8));
 	vmax = fmin(vmax,__shfl_xor(vmax, 4));
 	vmax = fmin(vmax,__shfl_xor(vmax, 2));
 	vmax = fmin(vmax,__shfl_xor(vmax, 1));
-//	printf("id %d Ratio %f min %f\n",laneid,t,vmax);
+	//	printf("id %d Ratio %f min %f\n",laneid,t,vmax);
 	index = __ballot(vmax == t);
 	if(laneid == 0) {
 		index = __ffs(index) - 1;
@@ -125,26 +124,25 @@ __device__ void pivot(float  (*p)[rows],float * cost, int collumns, int collumn,
 	 *  -y/p = x
 	 *
 	 */
+	const float ratio = p[collumn][laneid]/p[collumn][row];
+	//__shared__ float tmp[32][4][32];
+
+	//tmp[warpid][laneid]
+
 	for(int c = 0; c < collumns; c ++) {
 		if(c == collumn) continue;
 		//float res =
-		float put;
+		float put = p[c][laneid];
 		if(laneid == row) {
-			put = p[c][laneid]/p[collumn][row];
+			put /= p[collumn][row];
 			cost[c] -= put*cost[collumn];
 		} else {
-			put =p[c][laneid] - p[c][row]*(p[collumn][laneid]/p[collumn][row]);
+			put -= p[c][row]*(ratio);
 		}
 		p[c][laneid] =put;
 
 	}
-//	for(int c = 0; c < collumns && laneid == row; c ++) {
-//		if(c == collumn) continue;
-//		//float res =
-//		float temp = p[c][laneid]/p[collumn][row];
-//		cost[c] -= temp*cost[collumn];
-//		p[c][laneid] = temp;
-//	}
+
 	p[collumn][laneid] = (float) (laneid == row);
 	if(laneid == row) {
 		cost[collumn] = 0.0f;
@@ -160,26 +158,23 @@ template<int rows>
 __device__ float __forceinline__ apply_row_op(float  (*p)[rows],float * cost, int collumns)
 {
 	//__shared__ int bids[32][32];
-	const unsigned int laneid = threadIdx.x%32;
-	const unsigned int warpid = threadIdx.x/32;
-	int row, collumn;
-	int count = 1;
 	//bids[warpid][laneid] = -1;
 	//assert(cost[0] == -2.0f);
 	while(1) {
+		int row, collumn;
 		collumn = bland(cost,collumns);
 		if(collumn == -1 || cost[collumn] >= 0.0f) {
 			break;
 		}
 		row = get_pivot_row<rows>(p,collumn,collumns);
 		//printf("lane %d col %d row %d cost %f\n",laneid,collumn,row,cost[collumn]);
-		if(row == -1) {
-			count = 2;
-		}
-//		if(laneid == 0) {
-//			printf("warpid %d col %d row %d %f\n",warpid,collumn,row,p[collumn][row]);
-//		}
-		assert(row >= 0);
+	//	if(row == -1) {
+		//	count = 2;
+		//}
+		//		if(laneid == 0) {
+		//			printf("warpid %d col %d row %d %f\n",warpid,collumn,row,p[collumn][row]);
+		//		}
+	//	assert(row >= 0);
 		pivot<rows>(p,cost,collumns,collumn,row);
 		__threadfence();
 		//bids[warpid][]
@@ -229,13 +224,11 @@ template<int rows>
 __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n,unsigned int * in, unsigned int * in_value) {
 
 
-	const unsigned int tid = threadIdx.x;
 	const unsigned int warpid = (threadIdx.x+ blockIdx.x * blockDim.x) / 32;
-	const unsigned int laneid = tid % 32;
 
-	__shared__ int cache2[1024];
-	int new_n = n + 32 + 2;
-	assert(init_table<rows>((matrix+warpid*new_n),(cost+warpid*new_n),n,in,in_value)== new_n);
+	//__shared__ int cache2[1024];
+	const int new_n = n + 32 + 2;
+	init_table<rows>((matrix+warpid*new_n),(cost+warpid*new_n),n,in,in_value);
 	//	__syncthreads();
 
 	//	float  (*p)[rows] = (matrix+warpid*new_n);
@@ -247,16 +240,14 @@ __global__ void do_simplex(float  (*matrix)[rows],float * cost,int n,unsigned in
 	//	}
 	//
 	//	return;
-	cache2[tid] = apply_row_op<rows>((matrix+warpid*new_n),(cost+warpid*new_n),new_n);
-	__threadfence_system();
-	__syncthreads();
-	assert(cache2[tid] == cache2[(tid+32)%blockDim.x]);
+	apply_row_op<rows>((matrix+warpid*new_n),(cost+warpid*new_n),new_n);
+	//	__threadfence_system();
+	//__syncthreads();
+	//assert(cache2[tid] == cache2[(tid+32)%blockDim.x]);
 	//assert(collumn == cache2[tid]);
-//	printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
-	for(int i = 0; i < 1024;i++) {
+	//	printf("t1 %d i %d, warp %d\n",cache2[tid],tid,warpid);
 
-		//assert(cache2[i] == cache2[tid]);
-	}
+	//assert(cache2[i] == cache2[tid]);
 	//assert(cache[laneid][laneid] == cache[warpid][laneid]);
 
 }
@@ -325,6 +316,7 @@ int main(int argc, const char* argv[]) {
 	float * dcost;
 	unsigned int * in_value;
 	unsigned int * in;
+	CUDA_CHECK_RETURN(cudaDeviceSetCacheConfig( cudaFuncCachePreferL1 ));
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &in,sizeof(unsigned int)*problemwidth));
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &in_value,sizeof(unsigned int)*problemwidth));
 	CUDA_CHECK_RETURN(cudaMalloc((void**) &dcost,sizeof(cost)*warps));
@@ -340,7 +332,7 @@ int main(int argc, const char* argv[]) {
 
 	//CUDA_CHECK_RETURN(cudaMalloc((void**) &d, sizeof(float) * 26843545));
 	printf("hello\n");
-	do_simplex<32><<<14,1024>>>(dmatrix,dcost,problemwidth,in,in_value);
+	do_simplex<32><<<7,1024>>>(dmatrix,dcost,problemwidth,in,in_value);
 	CUDA_CHECK_RETURN(cudaThreadSynchronize());
 	//return 0;
 	CUDA_CHECK_RETURN(cudaMemcpy(matrix,mmatrix,sizeof(matrix), cudaMemcpyDeviceToHost));
