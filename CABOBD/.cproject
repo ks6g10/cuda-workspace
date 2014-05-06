@@ -32,7 +32,6 @@
 								<option id="nvcc.compiler.option.lineinfo.2081736287" name="Generate line-number information for device code (-lineinfo)" superClass="nvcc.compiler.option.lineinfo" value="true" valueType="boolean"/>
 								<option id="nvcc.compiler.ptxasoptions.294189559" name="ptaxas options (-Xptxas)" superClass="nvcc.compiler.ptxasoptions" valueType="stringList">
 									<listOptionValue builtIn="false" value="-v"/>
-									<listOptionValue builtIn="false" value="-abi=no"/>
 								</option>
 								<option id="nvcc.compiler.precdiv.691642691" name="Use IEEE round-to-nearest mode for precision FP division (-prec-div)" superClass="nvcc.compiler.precdiv" value="false" valueType="boolean"/>
 								<option id="nvcc.compiler.precsqrt.610799442" name="Use IEEE round-to-nearest mode for precision FP sqrt (-prec-sqrt)" superClass="nvcc.compiler.precsqrt" value="false" valueType="boolean"/>
